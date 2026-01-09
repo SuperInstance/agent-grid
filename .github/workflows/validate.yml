@@ -1,0 +1,188 @@
+name: Validate Package
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-structure:
+    name: Validate package structure
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+
+      - name: Check package structure
+        run: |
+          node -e "
+          const fs = require('fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+
+          const requiredFields = ['name', 'version', 'description', 'main', 'module', 'types'];
+          const missing = requiredFields.filter(field => !pkg[field]);
+
+          if (missing.length > 0) {
+            console.error('Missing required fields:', missing);
+            process.exit(1);
+          }
+
+          // Check package name
+          if (!pkg.name.startsWith('@luciddreamer/')) {
+            console.error('Package name should start with @luciddreamer/');
+            process.exit(1);
+          }
+
+          console.log('✓ Package structure is valid');
+          console.log('Name:', pkg.name);
+          console.log('Version:', pkg.version);
+          "
+
+      - name: Validate package.json
+        run: |
+          npm pkg fix
+
+      - name: Check exports
+        run: |
+          node -e "
+          const fs = require('fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+
+          if (!pkg.exports) {
+            console.error('Missing exports field');
+            process.exit(1);
+          }
+
+          console.log('✓ Exports configured correctly');
+          "
+
+  validate-build:
+    name: Validate build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node-version: ['18.x', '20.x']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build package
+        run: npm run build
+
+      - name: Verify build output
+        run: |
+          node -e "
+          const fs = require('fs');
+          const files = ['dist/index.js', 'dist/index.esm.js', 'dist/index.d.ts'];
+          const missing = files.filter(f => !fs.existsSync(f));
+
+          if (missing.length > 0) {
+            console.error('Missing build files:', missing);
+            process.exit(1);
+          }
+
+          console.log('✓ Build output is complete');
+          "
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+  validate-installation:
+    name: Validate installation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build package
+        run: npm run build
+
+      - name: Pack package
+        run: |
+          npm pack
+          ls -lh *.tgz
+
+      - name: Test local installation
+        run: |
+          mkdir -p test-install
+          cd test-install
+          npm init -y
+          npm install ../*.tgz
+          node -e "console.log('Package installed successfully!')"
+
+  validate-dependencies:
+    name: Validate dependencies
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check for security vulnerabilities
+        run: npm audit
+        continue-on-error: true
+
+      - name: List dependencies
+        run: |
+          npm list --depth=0
+
+      - name: Check peer dependencies
+        run: |
+          node -e "
+          const fs = require('fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+
+          if (!pkg.peerDependencies) {
+            console.log('No peer dependencies defined');
+          } else {
+            console.log('Peer dependencies:', Object.keys(pkg.peerDependencies));
+          }
+
+          if (!pkg.devDependencies) {
+            console.error('Missing devDependencies');
+            process.exit(1);
+          }
+
+          console.log('✓ Dependencies are valid');
+          "

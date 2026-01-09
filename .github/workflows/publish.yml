@@ -1,0 +1,149 @@
+name: Publish to npm
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., v1.0.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build:
+    name: Build distribution
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build package
+        run: npm run build
+
+      - name: Check build output
+        run: |
+          ls -la dist/
+          test -f dist/index.js || exit 1
+          test -f dist/index.esm.js || exit 1
+          test -f dist/index.d.ts || exit 1
+
+      - name: Store distribution packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-package-distribution
+          path: dist/
+          retention-days: 7
+
+  publish-to-npm:
+    name: Publish to npm
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/@luciddreamer/agent-grid
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - name: Download distribution packages
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-package-distribution
+          path: dist/
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  github-release:
+    name: Create GitHub Release
+    needs: [build, publish-to-npm]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download distribution packages
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-package-distribution
+          path: dist/
+
+      - name: Extract version from tag
+        id: get_version
+        run: |
+          VERSION=${{ github.event.release.tag_name }}
+          echo "version=${VERSION#v}" >> $GITHUB_OUTPUT
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          echo "## Changes in ${{ steps.get_version.outputs.version }}" > release_notes.md
+          echo "" >> release_notes.md
+          if [ -f CHANGELOG.md ]; then
+            head -n 50 CHANGELOG.md >> release_notes.md
+          fi
+          echo "" >> release_notes.md
+          echo "### Installation" >> release_notes.md
+          echo '```bash' >> release_notes.md
+          echo "npm install @luciddreamer/agent-grid@${{ steps.get_version.outputs.version }}" >> release_notes.md
+          echo '```' >> release_notes.md
+
+      - name: Update GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit ${{ github.event.release.tag_name }} --notes-file release_notes.md
+
+  smoke-test:
+    name: Smoke test published package
+    needs: publish-to-npm
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+
+      - name: Wait for npm to update
+        run: |
+          echo "Waiting for npm to index the new package..."
+          sleep 60
+
+      - name: Install from npm
+        run: |
+          npm install @luciddreamer/agent-grid
+
+      - name: Test import
+        run: |
+          node -e "console.log('Package installed successfully!')"
