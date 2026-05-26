@@ -83,7 +83,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: 'npm'
+          # cache removed - no lockfile
 
       - name: Install dependencies
         run: npm install
@@ -121,7 +121,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20.x'
-          cache: 'npm'
+          # cache removed - no lockfile
 
       - name: Install dependencies
         run: npm install
@@ -154,7 +154,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20.x'
-          cache: 'npm'
+          # cache removed - no lockfile
 
       - name: Install dependencies
         run: npm install
